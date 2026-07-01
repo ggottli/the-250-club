@@ -52,10 +52,13 @@ into `.env.local`.
 2. Add Redis from the Marketplace — either:
    - In the Vercel dashboard: **Storage → Marketplace Database Providers → Upstash for Redis**,
      or
-   - From the CLI: `vercel install upstash`
-3. The integration automatically injects `UPSTASH_REDIS_REST_URL` and
-   `UPSTASH_REDIS_REST_TOKEN` into your project's environment variables — no manual copying
-   needed on Vercel.
+   - From the CLI: `vercel install upstash/upstash-kv` (you'll need to accept Upstash's
+     marketplace terms in the browser link the CLI prints before the install completes)
+3. The integration automatically injects REST credentials into your project's environment
+   variables — no manual copying needed. Depending on how it was installed, Vercel names
+   these either `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` or the legacy
+   `KV_REST_API_URL`/`KV_REST_API_TOKEN` (a holdover from Vercel KV). `lib/redis.ts` reads
+   either pair, so both work with zero config.
 4. Deploy:
 
    ```bash

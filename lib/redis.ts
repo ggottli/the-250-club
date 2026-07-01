@@ -1,8 +1,18 @@
 import { Redis } from "@upstash/redis";
 
-// Vercel's Upstash Marketplace integration injects
-// UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN automatically.
-export const redis = Redis.fromEnv();
+// The Vercel Marketplace's "Upstash for Redis" product injects REST
+// credentials under legacy KV_REST_API_* names (a holdover from Vercel KV);
+// some setups instead use UPSTASH_REDIS_REST_*. Accept either.
+const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
+const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
+
+if (!url || !token) {
+  throw new Error(
+    "Missing Redis REST credentials. Set UPSTASH_REDIS_REST_URL/TOKEN or KV_REST_API_URL/TOKEN."
+  );
+}
+
+export const redis = new Redis({ url, token });
 
 export const keys = {
   publicGroups: "groups:public",
