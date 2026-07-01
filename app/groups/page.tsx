@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import PintGlass from "@/components/PintGlass";
-import Footer from "@/components/Footer";
 import { APP_TITLE, DEFAULT_GOAL, POLL_INTERVAL_MS } from "@/lib/config";
 import { getStoredName } from "@/lib/storage";
 import type { PublicGroupSummary } from "@/lib/types";
@@ -14,14 +13,11 @@ export default function GroupsPage() {
   const [name, setName] = useState<string | null>(null);
   const [publicGroups, setPublicGroups] = useState<PublicGroupSummary[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(true);
-  const [joinCode, setJoinCode] = useState("");
-  const [joinError, setJoinError] = useState("");
-  const [joinBusy, setJoinBusy] = useState(false);
+  const [groupSearch, setGroupSearch] = useState("");
 
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createGoal, setCreateGoal] = useState(String(DEFAULT_GOAL));
-  const [createPublic, setCreatePublic] = useState(true);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState("");
 
@@ -57,27 +53,6 @@ export default function GroupsPage() {
     return () => clearInterval(interval);
   }, [name, loadGroups]);
 
-  async function handleJoinByCode(e: React.FormEvent) {
-    e.preventDefault();
-    const code = joinCode.trim().toUpperCase();
-    if (!code) return;
-    setJoinBusy(true);
-    setJoinError("");
-    try {
-      const res = await fetch(`/api/groups/code/${encodeURIComponent(code)}`);
-      const data = await res.json();
-      if (!res.ok) {
-        setJoinError(data.error ?? "Couldn't find that group.");
-        return;
-      }
-      router.push(`/g/${data.groupId}`);
-    } catch {
-      setJoinError("Something went wrong. Try again.");
-    } finally {
-      setJoinBusy(false);
-    }
-  }
-
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = createName.trim();
@@ -89,7 +64,7 @@ export default function GroupsPage() {
       const res = await fetch("/api/groups", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed, goal: goalNum, isPublic: createPublic }),
+        body: JSON.stringify({ name: trimmed, goal: goalNum }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -106,6 +81,11 @@ export default function GroupsPage() {
 
   if (!name) return null;
 
+  const normalizedSearch = groupSearch.trim().toLocaleLowerCase();
+  const visibleGroups = normalizedSearch
+    ? publicGroups.filter((group) => group.name.toLocaleLowerCase().includes(normalizedSearch))
+    : publicGroups;
+
   return (
     <main className="flex-1 flex flex-col px-4 py-8 max-w-md mx-auto w-full">
       <div className="text-center mb-6">
@@ -117,16 +97,26 @@ export default function GroupsPage() {
 
       <section className="mb-6">
         <h2 className="text-white/80 font-bold text-sm uppercase tracking-wide mb-3">
-          Groups racing now
+          Find a group by name
         </h2>
+        <input
+          type="search"
+          value={groupSearch}
+          onChange={(e) => setGroupSearch(e.target.value)}
+          placeholder="Search group names"
+          className="mb-3 w-full rounded-xl bg-white/95 px-4 py-3 font-semibold text-navy-deep outline-none placeholder:text-navy-deep/40 focus:ring-4 focus:ring-gold"
+        />
         {loadingGroups && publicGroups.length === 0 && (
           <p className="text-white/40 text-sm">Loading...</p>
         )}
         {!loadingGroups && publicGroups.length === 0 && (
-          <p className="text-white/40 text-sm">No public groups yet — be the first!</p>
+          <p className="text-white/40 text-sm">No groups yet — be the first!</p>
+        )}
+        {!loadingGroups && publicGroups.length > 0 && visibleGroups.length === 0 && (
+          <p className="text-white/40 text-sm">No group names match that search.</p>
         )}
         <div className="flex flex-col gap-2">
-          {publicGroups.map((g) => (
+          {visibleGroups.map((g) => (
             <Link
               key={g.id}
               href={`/g/${g.id}`}
@@ -148,29 +138,6 @@ export default function GroupsPage() {
             </Link>
           ))}
         </div>
-      </section>
-
-      <section className="mb-6">
-        <h2 className="text-white/80 font-bold text-sm uppercase tracking-wide mb-3">
-          Join by code
-        </h2>
-        <form onSubmit={handleJoinByCode} className="flex gap-2">
-          <input
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-            placeholder="ABC12"
-            maxLength={6}
-            className="flex-1 rounded-xl bg-white/95 text-navy-deep font-bold text-lg px-4 py-3 text-center tracking-widest outline-none focus:ring-4 focus:ring-gold"
-          />
-          <button
-            type="submit"
-            disabled={joinBusy || !joinCode.trim()}
-            className="rounded-xl bg-navy border border-white/20 hover:bg-navy/80 text-white font-bold px-5 disabled:opacity-40"
-          >
-            Join
-          </button>
-        </form>
-        {joinError && <p className="text-firecracker-bright text-sm mt-2">{joinError}</p>}
       </section>
 
       <section>
@@ -206,15 +173,6 @@ export default function GroupsPage() {
               />
               <span className="text-white/50 text-sm">beers</span>
             </div>
-            <label className="flex items-center gap-2 text-white/70 text-sm font-semibold">
-              <input
-                type="checkbox"
-                checked={createPublic}
-                onChange={(e) => setCreatePublic(e.target.checked)}
-                className="w-5 h-5 accent-gold"
-              />
-              Public (show on the race list)
-            </label>
             {createError && <p className="text-firecracker-bright text-sm">{createError}</p>}
             <div className="flex gap-2 mt-1">
               <button
@@ -237,7 +195,6 @@ export default function GroupsPage() {
       </section>
 
       <div className="flex-1" />
-      <Footer />
     </main>
   );
 }

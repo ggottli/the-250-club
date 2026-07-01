@@ -11,12 +11,10 @@ No accounts, no database migrations — identity is just a random id stored in `
 ## How it works
 
 1. **`/`** — enter your name. Saved to `localStorage` along with a generated `memberId`.
-2. **`/groups`** — see public groups currently racing, join a private group by its short code,
-   or create a new group (name, goal, public/private).
+2. **`/groups`** — find a group by name or create a new group with a custom goal.
 3. **`/g/[id]`** — the main screen: the pint-glass meter, the big "Add a beer" button
-   (tap, or press-and-hold to add several quickly), your personal count, the live leaderboard,
-   a scrolling ticker of recent taps, a pace/ETA projection, and a share button that generates
-   a downloadable/shareable image.
+   (one released tap adds one beer), your personal count, the live leaderboard, a scrolling
+   ticker of recent taps, and a share button that generates a downloadable/shareable image.
 
 All game state lives in Upstash Redis and is shared across every device in the group. The
 group screen polls the server every few seconds so everyone's phone stays in sync.
@@ -27,7 +25,8 @@ group screen polls the server every few seconds so everyone's phone stays in syn
 - **Upstash Redis** via `@upstash/redis` — cross-device shared state (no `@vercel/kv`, which is
   sunset; this app talks to Upstash's REST API directly)
 - **canvas-confetti** for celebrations
-- No auth. No database migrations. No captchas.
+- No login. Duplicate names within a group require the person to claim the existing identity
+  or choose a different display name.
 
 ## Local setup
 
@@ -73,8 +72,7 @@ No other configuration is required. The Hobby (free) plan is enough for a backya
 
 Nearly everything you'd want to tweak for next year's party lives in two files:
 
-- `lib/config.ts` — app title (`APP_TITLE`), default goal, poll interval, hold-to-add timing,
-  the color palette.
+- `lib/config.ts` — app title (`APP_TITLE`), default goal, poll interval, and the color palette.
 - `lib/content.ts` — the fixed milestone thresholds/copy for the default 250 goal, the
   percentage-based milestones used for custom goals, and the rotating "did you know" fun facts.
 
@@ -82,13 +80,13 @@ Nearly everything you'd want to tweak for next year's party lives in two files:
 
 | Key | Type | Purpose |
 | --- | --- | --- |
-| `groups:public` | Set | IDs of public groups, for the homepage race list |
-| `group:{id}:meta` | Hash | `name`, `goal`, `joinCode`, `isPublic`, `createdAt` |
+| `groups:public` | Set | IDs of discoverable groups, for the group-name list |
+| `group:{id}:meta` | Hash | `name`, `goal`, `createdAt` |
 | `group:{id}:total` | Integer | The group's beer count (source of truth for the meter) |
 | `group:{id}:members` | Hash | `memberId -> displayName` |
+| `group:{id}:names` | Hash | Normalized display name -> `memberId`, for atomic uniqueness |
 | `group:{id}:counts` | Sorted Set | `memberId` scored by personal beer count (leaderboard) |
-| `group:{id}:events` | List | Recent `"name\|timestamp\|type"` entries for the ticker |
-| `joincode:{code}` | String | `joinCode -> groupId`, for "join by code" |
+| `group:{id}:events` | List | Recent `"name\|timestamp\|type\|count\|message"` ticker entries |
 
 ## API routes
 
@@ -96,17 +94,15 @@ Nearly everything you'd want to tweak for next year's party lives in two files:
 - `GET /api/groups` — list public groups (for the homepage race)
 - `GET /api/groups/[id]` — full group state (meta, total, leaderboard, events) — polled every
   3s by the group screen
-- `GET /api/groups/code/[code]` — resolve a join code to a group id
-- `POST /api/groups/[id]/join` — register a member (idempotent, dedupes display names)
-- `POST /api/groups/[id]/beer` — add a beer (`delta` capped 1–5 server-side)
+- `POST /api/groups/[id]/join` — register a member and enforce unique display names
+- `POST /api/groups/[id]/beer` — add exactly one beer
 - `POST /api/groups/[id]/undo` — undo your last beer (floored at 0)
 - `POST /api/groups/[id]/reset` — clear a group's counts/total/events
 
 ## Assumptions made
 
 - Default poll interval is 3 seconds, matching the spec's "within ~3s" sync requirement.
-- Group and member IDs are short slugs/UUIDs; join codes are 5-character A–Z/2–9 strings
-  (ambiguous characters like `0`/`O`/`1`/`I` excluded).
+- Group and member IDs are short slugs/UUIDs.
 - The crack/pour sound and haptic buzz are synthesized in-browser with the Web Audio API and
   `navigator.vibrate`, so no binary audio asset needs to ship with the app.
 - Resetting a group clears counts/total/events but keeps existing members registered (they
@@ -114,8 +110,6 @@ Nearly everything you'd want to tweak for next year's party lives in two files:
 
 ## Verified end-to-end
 
-This was manually driven through a real browser (Playwright + Chromium) against a local
-Upstash-compatible Redis before calling it done: name persistence, group creation with a
-custom goal, joining by code and from the public list, cross-device sync within the 3s poll
-window, milestone popups (both fixed 250-goal thresholds and percentage-based thresholds for
-custom goals), the fireworks finale at goal completion, delta capping, and undo-floored-at-0.
+The main group flows are manually driven through a real browser against Redis before release:
+name persistence and uniqueness, group creation and discovery, one-tap beer additions,
+cross-device sync, milestones, the fireworks finale, and undo-floored-at-0.

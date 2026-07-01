@@ -64,10 +64,6 @@ export default function LandingPage() {
             </button>
           </form>
         )}
-
-        <p className="mt-10 text-white/50 text-sm">
-          It&apos;s a group total — pace yourselves, drink water, and don&apos;t drive. 🇺🇸
-        </p>
       </div>
     </main>
   );

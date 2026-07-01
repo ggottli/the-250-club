@@ -7,9 +7,19 @@ interface TickerProps {
 }
 
 function messageFor(event: TickerEvent): string {
-  return event.type === "undo"
-    ? `↩️ ${event.name} took one back`
-    : `🍺 ${event.name} just cracked one open`;
+  if (event.type === "undo") return `↩️ ${event.name} took one back`;
+  if (event.count && event.count % 10 === 0) {
+    return `🏆 ${event.name} just hit ${event.count} total beers`;
+  }
+
+  const messages = [
+    `🍺 ${event.name} just cracked one open`,
+    `⚡ ${event.name} slammed a beer`,
+    `✅ ${event.name} just finished one off`,
+    `🍻 ${event.name} put another one away`,
+    `🎆 ${event.name} added one to the total`,
+  ];
+  return messages[event.messageIndex ?? event.ts % messages.length] ?? messages[0];
 }
 
 export default function Ticker({ events }: TickerProps) {

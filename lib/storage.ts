@@ -3,7 +3,6 @@
 
 const NAME_KEY = "250club:name";
 const MEMBER_ID_KEY = "250club:memberId";
-const MUTE_KEY = "250club:muted";
 
 function isBrowser() {
   return typeof window !== "undefined";
@@ -29,12 +28,7 @@ export function getMemberId(): string {
   return id;
 }
 
-export function getMuted(): boolean {
-  if (!isBrowser()) return false;
-  return window.localStorage.getItem(MUTE_KEY) === "1";
-}
-
-export function setMuted(muted: boolean) {
+export function setMemberId(memberId: string) {
   if (!isBrowser()) return;
-  window.localStorage.setItem(MUTE_KEY, muted ? "1" : "0");
+  window.localStorage.setItem(MEMBER_ID_KEY, memberId);
 }

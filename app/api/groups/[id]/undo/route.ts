@@ -26,12 +26,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ total });
   }
 
-  await redis.zincrby(keys.groupCounts(id), -1, memberId);
+  const memberCount = await redis.zincrby(keys.groupCounts(id), -1, memberId);
 
   const currentTotal = (await redis.get<number>(keys.groupTotal(id))) ?? 0;
   const newTotal = currentTotal > 0 ? await redis.decrby(keys.groupTotal(id), 1) : 0;
 
-  await pushEvent(id, name, "undo");
+  await pushEvent(id, name, "undo", memberCount);
 
   return NextResponse.json({ total: newTotal });
 }

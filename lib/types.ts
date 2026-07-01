@@ -2,8 +2,6 @@ export interface GroupMeta {
   id: string;
   name: string;
   goal: number;
-  joinCode: string;
-  isPublic: boolean;
   createdAt: number;
 }
 
@@ -17,6 +15,8 @@ export interface TickerEvent {
   name: string;
   ts: number;
   type: "beer" | "undo";
+  count?: number;
+  messageIndex?: number;
 }
 
 export interface MilestoneHit {

@@ -19,7 +19,7 @@ export const keys = {
   groupMeta: (id: string) => `group:${id}:meta`,
   groupTotal: (id: string) => `group:${id}:total`,
   groupMembers: (id: string) => `group:${id}:members`,
+  groupNames: (id: string) => `group:${id}:names`,
   groupCounts: (id: string) => `group:${id}:counts`,
   groupEvents: (id: string) => `group:${id}:events`,
-  joinCode: (code: string) => `joincode:${code}`,
 };

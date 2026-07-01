@@ -7,18 +7,26 @@ import PintGlass from "@/components/PintGlass";
 import BeerButton from "@/components/BeerButton";
 import Leaderboard from "@/components/Leaderboard";
 import Ticker from "@/components/Ticker";
-import MuteToggle from "@/components/MuteToggle";
 import ShareButton from "@/components/ShareButton";
 import FunFactBanner from "@/components/FunFactBanner";
 import MilestoneModal from "@/components/MilestoneModal";
 import FinaleOverlay from "@/components/FinaleOverlay";
-import Footer from "@/components/Footer";
-import { getMemberId, getStoredName, getMuted, setMuted as persistMuted } from "@/lib/storage";
+import {
+  getMemberId,
+  getStoredName,
+  setMemberId as persistMemberId,
+  setStoredName,
+} from "@/lib/storage";
 import { playCrackAndPour, vibrate } from "@/lib/sound";
 import { getCrossedMilestone } from "@/lib/content";
-import { computePace } from "@/lib/pace";
 import { POLL_INTERVAL_MS } from "@/lib/config";
 import type { GroupState, MilestoneHit } from "@/lib/types";
+
+interface NameConflict {
+  message: string;
+  existingMemberId: string;
+  choosingNewName: boolean;
+}
 
 export default function GroupPage() {
   const params = useParams<{ id: string }>();
@@ -29,11 +37,13 @@ export default function GroupPage() {
   const [memberId, setMemberId] = useState<string | null>(null);
   const [groupState, setGroupState] = useState<GroupState | null>(null);
   const [notFound, setNotFound] = useState(false);
-  const [muted, setMutedState] = useState(false);
+  const [joined, setJoined] = useState(false);
+  const [joinBusy, setJoinBusy] = useState(false);
+  const [joinError, setJoinError] = useState("");
+  const [nameConflict, setNameConflict] = useState<NameConflict | null>(null);
+  const [replacementName, setReplacementName] = useState("");
   const [milestoneHit, setMilestoneHit] = useState<MilestoneHit | null>(null);
   const [showFinale, setShowFinale] = useState(false);
-  const [copyLabel, setCopyLabel] = useState("Copy invite");
-  const [now, setNow] = useState<number | null>(null);
 
   const prevTotalRef = useRef<number | null>(null);
   const finaleShownRef = useRef(false);
@@ -48,7 +58,6 @@ export default function GroupPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setName(storedName);
     setMemberId(getMemberId());
-    setMutedState(getMuted());
   }, [router]);
 
   const applyTotal = useCallback((newTotal: number, goal: number) => {
@@ -82,11 +91,54 @@ export default function GroupPage() {
       const data: GroupState = await res.json();
       applyTotal(data.total, data.meta.goal);
       setGroupState(data);
-      setNow(Date.now());
     } catch {
       // transient network error, next poll retries
     }
   }, [groupId, applyTotal]);
+
+  const joinGroup = useCallback(
+    async (candidateName: string, candidateMemberId: string) => {
+      setJoinBusy(true);
+      setJoinError("");
+      try {
+        const res = await fetch(`/api/groups/${groupId}/join`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ memberId: candidateMemberId, name: candidateName }),
+        });
+        const data = await res.json();
+        if (res.status === 404) {
+          setNotFound(true);
+          return false;
+        }
+        if (res.status === 409 && data.code === "NAME_TAKEN") {
+          setJoined(false);
+          setNameConflict({
+            message: data.error,
+            existingMemberId: data.existingMemberId,
+            choosingNewName: false,
+          });
+          return false;
+        }
+        if (!res.ok) {
+          setJoinError(data.error ?? "Couldn't join this group.");
+          return false;
+        }
+
+        setName(data.name);
+        setStoredName(data.name);
+        setNameConflict(null);
+        setJoined(true);
+        return true;
+      } catch {
+        setJoinError("Something went wrong. Try again.");
+        return false;
+      } finally {
+        setJoinBusy(false);
+      }
+    },
+    [groupId]
+  );
 
   // Join the group, then start polling.
   useEffect(() => {
@@ -94,15 +146,7 @@ export default function GroupPage() {
     let cancelled = false;
 
     (async () => {
-      try {
-        await fetch(`/api/groups/${groupId}/join`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ memberId, name }),
-        });
-      } catch {
-        // ignore; polling will still show group state
-      }
+      await joinGroup(name, memberId);
       if (!cancelled) fetchState();
     })();
 
@@ -111,13 +155,11 @@ export default function GroupPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [name, memberId, groupId, fetchState]);
+  }, [name, memberId, groupId, fetchState, joinGroup]);
 
   const fireLocalCelebration = useCallback(() => {
-    if (!muted) {
-      playCrackAndPour();
-      vibrate(40);
-    }
+    playCrackAndPour();
+    vibrate(40);
     confetti({
       particleCount: 30,
       spread: 55,
@@ -125,7 +167,7 @@ export default function GroupPage() {
       origin: { y: 0.75 },
       colors: ["#f4b942", "#b31942", "#ffffff"],
     });
-  }, [muted]);
+  }, []);
 
   const handleAdd = useCallback(async () => {
     if (!memberId) return;
@@ -134,7 +176,7 @@ export default function GroupPage() {
       const res = await fetch(`/api/groups/${groupId}/beer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memberId, delta: 1 }),
+        body: JSON.stringify({ memberId }),
       });
       const data = await res.json();
       if (res.ok && groupState) {
@@ -160,22 +202,22 @@ export default function GroupPage() {
     }
   }, [memberId, groupId, fetchState]);
 
-  function toggleMute() {
-    const next = !muted;
-    setMutedState(next);
-    persistMuted(next);
+  async function confirmExistingAccount() {
+    if (!nameConflict || !name) return;
+    persistMemberId(nameConflict.existingMemberId);
+    setMemberId(nameConflict.existingMemberId);
+    await joinGroup(name, nameConflict.existingMemberId);
+    fetchState();
   }
 
-  async function handleCopyInvite() {
-    if (!groupState) return;
-    const url = `${window.location.origin}/g/${groupId}`;
-    const text = `Join "${groupState.meta.name}" on The 250 Club! Code: ${groupState.meta.joinCode} — ${url}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyLabel("Copied!");
-      setTimeout(() => setCopyLabel("Copy invite"), 2000);
-    } catch {
-      // clipboard unsupported; ignore
+  async function submitReplacementName(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = replacementName.trim();
+    if (!trimmed || !memberId) return;
+    const didJoin = await joinGroup(trimmed, memberId);
+    if (didJoin) {
+      setReplacementName("");
+      fetchState();
     }
   }
 
@@ -204,21 +246,11 @@ export default function GroupPage() {
   const { meta, total, leaderboard, events } = groupState;
   const myEntry = leaderboard.find((e) => e.memberId === memberId);
   const myCount = myEntry?.count ?? 0;
-  const pace = computePace(events, total, meta.goal, now ?? meta.createdAt);
 
   return (
     <main className="flex-1 flex flex-col max-w-md mx-auto w-full">
-      <header className="flex items-center justify-between px-4 pt-4 pb-2">
-        <div className="min-w-0">
-          <h1 className="font-black text-white text-lg truncate">{meta.name}</h1>
-          <button
-            onClick={handleCopyInvite}
-            className="text-xs text-gold font-bold tracking-wide"
-          >
-            Code: {meta.joinCode} · {copyLabel}
-          </button>
-        </div>
-        <MuteToggle muted={muted} onToggle={toggleMute} />
+      <header className="px-4 pt-5 pb-2 text-center">
+        <h1 className="font-black text-white text-xl truncate">{meta.name}</h1>
       </header>
 
       <section className="flex flex-col items-center py-4">
@@ -226,7 +258,7 @@ export default function GroupPage() {
       </section>
 
       <section className="flex flex-col items-center gap-3 px-4">
-        <BeerButton onAdd={handleAdd} disabled={!memberId} />
+        <BeerButton onAdd={handleAdd} disabled={!memberId || !joined} />
         <div className="text-center">
           <p className="text-white/70 text-sm">
             Your count: <span className="font-bold text-white">{myCount}</span>
@@ -234,21 +266,8 @@ export default function GroupPage() {
           <button onClick={handleUndo} className="text-xs text-white/40 underline mt-0.5">
             Undo last beer
           </button>
-        </div>
-      </section>
-
-      <section className="px-4 mt-4">
-        <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center text-sm text-white/70">
-          {pace.etaLabel ? (
-            <>
-              Group pace: <span className="font-bold text-gold">{pace.perHour}/hr</span> — on
-              track to hit {meta.goal} by{" "}
-              <span className="font-bold text-white">{pace.etaLabel}</span>.
-            </>
-          ) : total >= meta.goal ? (
-            <span className="font-bold text-gold">Goal reached. Legends.</span>
-          ) : (
-            "Keep tapping — pace will show once a few beers are logged."
+          {joinError && !nameConflict && (
+            <p className="mt-2 text-sm text-firecracker-bright">{joinError}</p>
           )}
         </div>
       </section>
@@ -269,7 +288,6 @@ export default function GroupPage() {
 
       <div className="flex-1" />
       <Ticker events={events} />
-      <Footer />
 
       {milestoneHit && (
         <MilestoneModal milestone={milestoneHit} onDismiss={() => setMilestoneHit(null)} />
@@ -281,6 +299,68 @@ export default function GroupPage() {
           goal={meta.goal}
           onDismiss={() => setShowFinale(false)}
         />
+      )}
+      {nameConflict && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-deep/90 p-5">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="name-conflict-title"
+            className="w-full max-w-sm rounded-2xl border border-white/15 bg-navy p-5 shadow-2xl"
+          >
+            <h2 id="name-conflict-title" className="text-xl font-black text-white">
+              Name already in use
+            </h2>
+            {!nameConflict.choosingNewName ? (
+              <>
+                <p className="mt-3 text-white/75">{nameConflict.message}</p>
+                <div className="mt-5 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNameConflict((current) =>
+                        current ? { ...current, choosingNewName: true } : current
+                      )
+                    }
+                    className="flex-1 rounded-xl bg-white/10 py-3 font-bold text-white"
+                  >
+                    No
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmExistingAccount}
+                    disabled={joinBusy}
+                    className="flex-1 rounded-xl bg-firecracker py-3 font-bold text-white disabled:opacity-40"
+                  >
+                    Yes, that&apos;s me
+                  </button>
+                </div>
+              </>
+            ) : (
+              <form onSubmit={submitReplacementName} className="mt-4 flex flex-col gap-3">
+                <label htmlFor="replacement-name" className="text-sm font-bold text-white/75">
+                  Choose a different name
+                </label>
+                <input
+                  id="replacement-name"
+                  autoFocus
+                  value={replacementName}
+                  onChange={(e) => setReplacementName(e.target.value)}
+                  maxLength={24}
+                  className="rounded-xl bg-white px-4 py-3 font-bold text-navy-deep outline-none focus:ring-4 focus:ring-gold"
+                />
+                {joinError && <p className="text-sm text-firecracker-bright">{joinError}</p>}
+                <button
+                  type="submit"
+                  disabled={joinBusy || !replacementName.trim()}
+                  className="rounded-xl bg-firecracker py-3 font-bold text-white disabled:opacity-40"
+                >
+                  Use this name
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
       )}
     </main>
   );
