@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { redis, keys } from "@/lib/redis";
 import { getGroupMeta } from "@/lib/group";
-import { dedupeName } from "@/lib/id";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -22,13 +21,45 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const existingName = members[memberId];
   if (existingName) {
+    await redis.hsetnx(keys.groupNames(id), existingName.toLocaleLowerCase(), memberId);
     return NextResponse.json({ name: existingName });
   }
 
-  const finalName = dedupeName(requestedName, Object.values(members));
-  await redis.hset(keys.groupMembers(id), { [memberId]: finalName });
+  const normalizedName = requestedName.toLocaleLowerCase();
+  const matchingMember = Object.entries(members).find(
+    ([, name]) => name.toLocaleLowerCase() === normalizedName
+  );
+  if (matchingMember) {
+    await redis.hsetnx(keys.groupNames(id), normalizedName, matchingMember[0]);
+    return NextResponse.json(
+      {
+        code: "NAME_TAKEN",
+        error: `An account with this name already exists in ${meta.name}, is this you?`,
+        groupName: meta.name,
+        existingMemberId: matchingMember[0],
+      },
+      { status: 409 }
+    );
+  }
+
+  // Claim the normalized name atomically so simultaneous joins cannot create duplicates.
+  const claimedName = await redis.hsetnx(keys.groupNames(id), normalizedName, memberId);
+  if (!claimedName) {
+    const existingMemberId = await redis.hget<string>(keys.groupNames(id), normalizedName);
+    return NextResponse.json(
+      {
+        code: "NAME_TAKEN",
+        error: `An account with this name already exists in ${meta.name}, is this you?`,
+        groupName: meta.name,
+        existingMemberId,
+      },
+      { status: 409 }
+    );
+  }
+
+  await redis.hset(keys.groupMembers(id), { [memberId]: requestedName });
   // Seed a zero score so the member shows up on the leaderboard immediately.
   await redis.zadd(keys.groupCounts(id), { nx: true }, { score: 0, member: memberId });
 
-  return NextResponse.json({ name: finalName });
+  return NextResponse.json({ name: requestedName });
 }
